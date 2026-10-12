@@ -1,0 +1,12 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      match /days/{dateId} {
+        allow read, create, update: if request.auth != null && request.auth.uid == userId && dateId.matches('^\\d{4}-\\d{2}-\\d{2}$') && request.resource.data.keys().hasOnly(['date','weight','waist','steps','water','mood','notes','exercises','meals','updatedAt']) && request.resource.data.date == dateId;
+        allow delete: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+  }
+}
