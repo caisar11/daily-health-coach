@@ -1,13 +1,13 @@
 import {initializeApp} from 'firebase/app';
 import {getAuth,GoogleAuthProvider,signInWithPopup,signInWithRedirect,getRedirectResult,onAuthStateChanged,signOut} from 'firebase/auth';
 import {getFirestore,doc,setDoc,getDoc,getDocs,collection,query,orderBy,limit,deleteDoc} from 'firebase/firestore';
-import {initializeAppCheck,ReCaptchaV3Provider} from 'firebase/app-check';
+import {initializeAppCheck,ReCaptchaEnterpriseProvider,getToken} from 'firebase/app-check';
 import {getAI,getGenerativeModel,GoogleAIBackend} from 'firebase/ai';
 import {firebaseConfig,recaptchaSiteKey,geminiModel} from './config.js';
 const $=s=>document.querySelector(s);
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
-if(recaptchaSiteKey && !recaptchaSiteKey.startsWith('REPLACE_')) initializeAppCheck(app,{provider:new ReCaptchaV3Provider(recaptchaSiteKey),isTokenAutoRefreshEnabled:true});
-const model=getGenerativeModel(getAI(app,{backend:new GoogleAIBackend()}),{model:geminiModel||'gemini-2.5-flash'});
+const appCheck=(recaptchaSiteKey && !recaptchaSiteKey.startsWith('REPLACE_')) ? initializeAppCheck(app,{provider:new ReCaptchaEnterpriseProvider(recaptchaSiteKey),isTokenAutoRefreshEnabled:true}) : null;
+const model=getGenerativeModel(getAI(app,{backend:new GoogleAIBackend()}),{model:geminiModel||'gemini-3.8-flash'});
 const pad=n=>String(n).padStart(2,'0');
 const localDate=()=>{const d=new Date();return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
 const fmt=n=>Number.isFinite(n)?n.toLocaleString('ko-KR'): '—';
@@ -45,8 +45,13 @@ $('#save-profile').onclick=async()=>{const height=numberOrNull($('#height').valu
 $('#meal-image').onchange=e=>{const file=e.target.files?.[0],img=$('#meal-preview');if(!file){img.hidden=true;return;}img.src=URL.createObjectURL(file);img.hidden=false;};
 function parseJson(txt){const s=txt.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();return JSON.parse(s)}
 async function imagePart(file){if(file.size>5*1024*1024)throw Error('이미지 크기는 5MB 이하로 해주세요.');if(!['image/png','image/jpeg','image/webp'].includes(file.type))throw Error('JPG, PNG, WEBP만 지원합니다.');const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file)});return {inlineData:{mimeType:file.type,data:b64}};}
-$('#analyze').onclick=async()=>{const file=$('#meal-image').files?.[0],memo=$('#meal-description').value.trim();if(!file&&!memo){status('#ai-status','사진 또는 음식 설명을 입력하세요.',true);return;}const btn=$('#analyze');btn.disabled=true;status('#ai-status','Gemini가 음식을 분석하고 있습니다…');$('#ai-result').innerHTML='';try{
+$('#analyze').onclick=async()=>{const file=$('#meal-image').files?.[0],memo=$('#meal-description').value.trim();if(!file&&!memo){status('#ai-status','사진 또는 음식 설명을 입력하세요.',true);return;}const btn=$('#analyze');btn.disabled=true;status('#ai-status',`인증 확인 후 Gemini 분석 중… (모델: ${geminiModel||'gemini-3.8-flash'})`);$('#ai-result').innerHTML='';try{
 const prompt=`당신은 한국어로 답하는 일반 영양정보 도우미입니다. 제공된 설명/사진에서 음식 종류와 양 및 대략적인 영양소를 추정하되 정확하다고 주장하지 마세요. 건강 진단이나 단정적인 의학 조언을 하지 마세요. 목표: ${profile.goal||'건강 습관 유지'}. 음식 설명: ${memo||'사진 참조'}. 반드시 JSON 객체 한 개만 출력하세요. 형식 {"foods":[{"name":"음식명","amount":"추정량","kcal":123,"protein":12,"carb":12,"fat":4}],"total":{"kcal":123,"protein":12,"carb":12,"fat":4},"headline":"한 줄 요약","advice":["권장 행동1","권장 행동2"]}. 수치는 숫자이며 불확실하면 추정값으로.`;
+if(!appCheck) throw new Error('App Check 사이트 키가 비어 있습니다. src/config.js의 recaptchaSiteKey를 확인하세요.');
+let check;
+try { check=await getToken(appCheck, true); }
+catch(tokenError) { throw new Error('App Check 토큰 발급 실패 ('+(tokenError?.code||'unknown')+'): '+(tokenError?.message||'사이트 키·등록 도메인을 확인하세요.')); }
+if(!check?.token) throw new Error('App Check 토큰을 발급받지 못했습니다. 등록 도메인과 사이트 키를 확인하세요.');
 const parts=[prompt];if(file)parts.push(await imagePart(file));const result=await model.generateContent(parts);const parsed=parseJson(result.response.text());if(!parsed.total||!Array.isArray(parsed.foods))throw Error('AI 응답을 이해할 수 없습니다. 다시 시도하세요.');const meal={id:crypto.randomUUID(),slot:$('#meal-slot').value,description:memo,headline:text(parsed.headline).slice(0,200),foods:parsed.foods.slice(0,15).map(f=>({name:text(f.name).slice(0,100),amount:text(f.amount).slice(0,100),kcal:Number(f.kcal)||0,protein:Number(f.protein)||0,carb:Number(f.carb)||0,fat:Number(f.fat)||0})),total:Object.fromEntries(['kcal','protein','carb','fat'].map(k=>[k,Number(parsed.total[k])||0])),advice:Array.isArray(parsed.advice)?parsed.advice.slice(0,4).map(text):[]};day().meals.push(meal);await saveDay();$('#ai-result').innerHTML=`<div class="result"><b>${escapeHTML(meal.headline)}</b><p>약 ${fmt(meal.total.kcal)} kcal · 단백질 ${fmt(meal.total.protein)}g</p><ul>${meal.foods.map(f=>`<li>${escapeHTML(f.name)} (${escapeHTML(f.amount)}) 약 ${fmt(f.kcal)}kcal</li>`).join('')}</ul><ul>${meal.advice.map(a=>`<li>${escapeHTML(a)}</li>`).join('')}</ul><p class="small muted">AI 추정치이며 의료적 판단 근거가 아닙니다.</p></div>`;status('#ai-status','분석 결과가 저장되었습니다.');
 }catch(e){status('#ai-status',`분석 실패: ${safeErr(e)}. Firebase AI Logic / App Check / 모델 설정을 확인하세요.`,true)}finally{btn.disabled=false}};
 $('#export-csv').onclick=()=>{const rows=[['날짜','체중(kg)','허리(cm)','걸음','물(잔)','운동(건)','운동(분)','메모'],...Object.values(days).sort((a,b)=>a.date.localeCompare(b.date)).map(d=>[d.date,d.weight??'',d.waist??'',d.steps??'',d.water??'',d.exercises?.length||0,(d.exercises||[]).reduce((s,e)=>s+Number(e.minutes||0),0),d.notes||''])];const csv='\ufeff'+rows.map(r=>r.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='health-records.csv';a.click();URL.revokeObjectURL(url)};
