@@ -9,4 +9,4 @@ export const firebaseConfig = {
 // Firebase App Check에 등록한 reCAPTCHA v3 공개 사이트 키
 export const recaptchaSiteKey = 'REPLACE_RECAPTCHA_V3_SITE_KEY';
 // Firebase AI Logic에서 사용 가능한 모델명을 확인해 주세요.
-export const geminiModel = 'gemini-2.5-flash';
+export const geminiModel = 'gemini-3.1-flash-lite';
