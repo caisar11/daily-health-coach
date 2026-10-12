@@ -1,0 +1,49 @@
+name: Preview Firebase Hosting (PR)
+
+on:
+  pull_request:
+
+permissions:
+  checks: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  build_and_preview:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Create Firebase web configuration
+        shell: bash
+        env:
+          FIREBASE_CONFIG_JS: ${{ secrets.FIREBASE_CONFIG_JS }}
+        run: |
+          if [ -z "$FIREBASE_CONFIG_JS" ]; then
+            echo 'Missing GitHub Actions secret: FIREBASE_CONFIG_JS'
+            exit 1
+          fi
+          mkdir -p src
+          printf '%s\n' "$FIREBASE_CONFIG_JS" > src/config.js
+          test -s src/config.js
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build site
+        run: npm run build
+
+      - name: Deploy preview to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DAILY_HEALTH_COACH_8D898 }}
+          projectId: daily-health-coach-8d898
